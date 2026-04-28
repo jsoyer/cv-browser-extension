@@ -27,7 +27,7 @@
     {
       "id": 4,
       "name": "Firefox Compatibility + Polish",
-      "status": "not_started",
+      "status": "completed",
       "batch": 3,
       "dependencies": [2, 3]
     }
@@ -49,7 +49,7 @@
       "id": 3,
       "sprints": [4],
       "parallel": false,
-      "status": "not_started"
+      "status": "completed"
     }
   ]
 }
