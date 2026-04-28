@@ -1,9 +1,11 @@
+import { browser } from "../../lib/browser"
+
 interface QuickActionsProps {
   apiUrl: string
 }
 
 function openTab(url: string) {
-  chrome.tabs.create({ url })
+  browser.tabs.create({ url })
 }
 
 export function QuickActions({ apiUrl }: QuickActionsProps) {
@@ -34,7 +36,7 @@ export function QuickActions({ apiUrl }: QuickActionsProps) {
       </button>
 
       <button
-        onClick={() => chrome.runtime.openOptionsPage()}
+        onClick={() => browser.runtime.openOptionsPage()}
         className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-white/10 px-3 py-2 text-xs font-medium text-gray-200 hover:bg-white/20 transition-colors"
       >
         <svg

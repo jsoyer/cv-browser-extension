@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { browser } from "../lib/browser"
 import { ApplicationList } from "./components/ApplicationList"
 import { QuickActions } from "./components/QuickActions"
 import { getRecentApplications, getSettings } from "../lib/storage"
@@ -46,14 +47,14 @@ export function App() {
 
     // Check API health via background
     const healthMsg: ExtensionMessage = { type: "CHECK_HEALTH" }
-    chrome.runtime
+    browser.runtime
       .sendMessage(healthMsg)
       .then((res: { healthy: boolean }) => setHealthy(res.healthy))
       .catch(() => setHealthy(false))
 
     // Fetch fresh applications from background
     const appsMsg: ExtensionMessage = { type: "GET_RECENT_APPLICATIONS" }
-    chrome.runtime
+    browser.runtime
       .sendMessage(appsMsg)
       .then((res: { success: boolean; apps?: Application[] }) => {
         if (res.success && res.apps) {
@@ -108,7 +109,7 @@ export function App() {
             API key not configured.{" "}
             <button
               className="underline hover:text-amber-200"
-              onClick={() => chrome.runtime.openOptionsPage()}
+              onClick={() => browser.runtime.openOptionsPage()}
             >
               Open settings
             </button>

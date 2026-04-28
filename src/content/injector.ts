@@ -4,6 +4,7 @@
  * across SPA navigations.
  */
 
+import { browser } from "../lib/browser"
 import { BUTTON_ID, SELECTORS, TOAST_ID } from "../lib/constants"
 import { queryElement } from "./detector"
 import { extractJobData } from "./extractor"
@@ -36,6 +37,23 @@ const BUTTON_STYLE = `
 const BUTTON_HOVER_BG = "#6d28d9"
 const BUTTON_DEFAULT_BG = "#7c3aed"
 const BUTTON_LOADING_BG = "#a78bfa"
+
+// ---------------------------------------------------------------------------
+// Debounce state — prevents rapid clicks from triggering multiple pipeline runs
+// ---------------------------------------------------------------------------
+
+const DEBOUNCE_MS = 10000
+const lastClickTime = new Map<string, number>()
+
+function isDebounced(key: string): boolean {
+  const last = lastClickTime.get(key)
+  if (last === undefined) return false
+  return Date.now() - last < DEBOUNCE_MS
+}
+
+function recordClick(key: string): void {
+  lastClickTime.set(key, Date.now())
+}
 
 // ---------------------------------------------------------------------------
 // Toast styles
@@ -200,6 +218,13 @@ async function handleAddToPipeline(
   btn: HTMLButtonElement,
   source: JobSource
 ): Promise<void> {
+  const debounceKey = `${source}:${window.location.href}`
+  if (isDebounced(debounceKey)) {
+    showToast("Already processing — please wait...", "info")
+    return
+  }
+
+  recordClick(debounceKey)
   setButtonState(btn, "loading")
   showToast("Extracting job data...", "info")
 
@@ -221,7 +246,7 @@ async function handleAddToPipeline(
   }
 
   try {
-    const response = await chrome.runtime.sendMessage(message)
+    const response = await browser.runtime.sendMessage(message)
 
     if (response?.success) {
       setButtonState(btn, "done")
@@ -248,7 +273,7 @@ async function handleAddToPipeline(
 // Listen for pipeline progress messages from the service worker
 // ---------------------------------------------------------------------------
 
-chrome.runtime.onMessage.addListener((message: ExtensionMessage<PipelineProgressPayload>) => {
+browser.runtime.onMessage.addListener((message: ExtensionMessage<PipelineProgressPayload>) => {
   if (message.type !== "PIPELINE_PROGRESS") return
   const payload = message.payload
   if (!payload) return

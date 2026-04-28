@@ -1,6 +1,6 @@
 /**
  * cv-api HTTP client for use in browser extension contexts.
- * Settings are loaded from chrome.storage.sync via the storage module.
+ * Settings are loaded from browser.storage.sync via the storage module.
  * Compatible with Manifest V3 service workers and content scripts.
  */
 
@@ -201,7 +201,7 @@ export class CvApiClient {
 }
 
 // ---------------------------------------------------------------------------
-// Factory — loads settings from chrome.storage at call time
+// Factory — loads settings from browser.storage at call time
 // ---------------------------------------------------------------------------
 
 export async function createClientFromStorage(): Promise<CvApiClient> {
