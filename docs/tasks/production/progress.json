@@ -1,0 +1,54 @@
+{
+  "task": "production-readiness",
+  "created": "2026-04-28",
+  "sprints": [
+    {
+      "id": 1,
+      "name": "Manual Testing + DOM Selector Fixes",
+      "status": "not_started",
+      "batch": 1,
+      "dependencies": []
+    },
+    {
+      "id": 2,
+      "name": "Offline Retry Logic",
+      "status": "not_started",
+      "batch": 2,
+      "dependencies": []
+    },
+    {
+      "id": 3,
+      "name": "Integration Tests + Icon Assets",
+      "status": "not_started",
+      "batch": 2,
+      "dependencies": []
+    },
+    {
+      "id": 4,
+      "name": "Firefox Compatibility + Polish",
+      "status": "not_started",
+      "batch": 3,
+      "dependencies": [2, 3]
+    }
+  ],
+  "batches": [
+    {
+      "id": 1,
+      "sprints": [1],
+      "parallel": false,
+      "status": "not_started"
+    },
+    {
+      "id": 2,
+      "sprints": [2, 3],
+      "parallel": true,
+      "status": "not_started"
+    },
+    {
+      "id": 3,
+      "sprints": [4],
+      "parallel": false,
+      "status": "not_started"
+    }
+  ]
+}

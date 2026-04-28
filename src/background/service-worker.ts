@@ -235,7 +235,7 @@ chrome.runtime.onMessage.addListener(
       }
 
       default:
-        break
+        return false
     }
   }
 )

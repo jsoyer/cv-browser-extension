@@ -10,18 +10,25 @@ import { copyFileSync, mkdirSync, existsSync } from "fs"
 function copyExtensionAssets() {
   return {
     name: "copy-extension-assets",
-    closeBundle() {
+    writeBundle() {
+      const root = resolve(__dirname)
       // Manifest
-      copyFileSync("src/manifest.json", "dist/manifest.json")
+      const manifestSrc = resolve(root, "src/manifest.json")
+      const manifestDest = resolve(root, "dist/manifest.json")
+      if (existsSync(manifestSrc)) {
+        copyFileSync(manifestSrc, manifestDest)
+      } else {
+        console.warn("[copy-extension-assets] manifest.json not found at", manifestSrc)
+      }
 
       // Icons
-      const iconsDir = "dist/icons"
+      const iconsDir = resolve(root, "dist/icons")
       if (!existsSync(iconsDir)) mkdirSync(iconsDir, { recursive: true })
 
       const iconFiles = ["icon-16.png", "icon-48.png", "icon-128.png"]
       for (const icon of iconFiles) {
-        const src = `public/icons/${icon}`
-        const dest = `${iconsDir}/${icon}`
+        const src = resolve(root, "public/icons", icon)
+        const dest = resolve(iconsDir, icon)
         if (existsSync(src)) {
           copyFileSync(src, dest)
         }
