@@ -6,6 +6,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: false,
     include: ["tests/**/*.test.ts"],
+    setupFiles: ["tests/setup.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov", "html"],
@@ -14,6 +15,10 @@ export default defineConfig({
         "src/**/*.d.ts",
         "src/**/index.html",
         "src/manifest.json",
+        "src/popup/**",
+        "src/options/**",
+        "src/content/index.ts",
+        "src/lib/storage.ts",
       ],
       thresholds: {
         lines: 70,
