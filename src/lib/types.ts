@@ -141,6 +141,9 @@ export type MessageType =
   | "SAVE_SETTINGS"
   | "GET_RECENT_APPLICATIONS"
   | "CHECK_HEALTH"
+  | "RETRY_PENDING_JOBS"
+  | "GET_PENDING_JOBS"
+  | "PENDING_JOBS_UPDATED"
 
 export interface ExtensionMessage<T = unknown> {
   type: MessageType
@@ -161,4 +164,26 @@ export interface PipelineProgressPayload {
 export interface PipelineResult {
   application: Application
   jobId: string
+}
+
+// ---------------------------------------------------------------------------
+// Pending jobs queue (offline retry)
+// ---------------------------------------------------------------------------
+
+export interface PendingJob {
+  id: string
+  job: JobData
+  createdAt: number
+  retryCount: number
+  lastError?: string
+}
+
+export type RetryMessageType =
+  | "RETRY_PENDING_JOBS"
+  | "GET_PENDING_JOBS"
+  | "PENDING_JOBS_UPDATED"
+
+export interface RetryMessagePayload {
+  jobs?: PendingJob[]
+  count?: number
 }

@@ -9,21 +9,28 @@
  * - Push notifications for pipeline events
  */
 
-import { browser } from "../lib/browser"
 import { createClientFromStorage } from "../lib/api-client"
 import { ALARM_INTERVALS, ALARM_NAMES } from "../lib/constants"
 import {
+  addPendingJob,
+  getPendingJobs,
   getRecentApplications,
   getSettings,
   prependApplication,
+  removePendingJob,
+  updatePendingJob,
 } from "../lib/storage"
 import type {
   AddToPipelinePayload,
   Application,
   ExtensionMessage,
+  PendingJob,
   PipelineProgressPayload,
   PipelineResult,
 } from "../lib/types"
+
+const MAX_RETRIES = 5
+const BACKOFF_INTERVALS_MS = [60_000, 300_000, 900_000, 3_600_000, 14_400_000]
 
 // ---------------------------------------------------------------------------
 // Badge management
@@ -32,19 +39,30 @@ import type {
 async function updateBadge(): Promise<void> {
   const settings = await getSettings()
   if (!settings.badgeEnabled) {
-    browser.action.setBadgeText({ text: "" })
+    chrome.action.setBadgeText({ text: "" })
     return
   }
 
   try {
     const client = await createClientFromStorage()
     const apps = await client.listApplications("applied")
-    const count = apps.length
+    const pending = await getPendingJobs()
+    const activeCount = apps.length
+    const pendingCount = pending.length
 
-    browser.action.setBadgeText({ text: count > 0 ? String(count) : "" })
-    browser.action.setBadgeBackgroundColor({ color: "#7c3aed" })
+    let badgeText = ""
+    if (activeCount > 0 && pendingCount > 0) {
+      badgeText = `${activeCount}+${pendingCount}`
+    } else if (activeCount > 0) {
+      badgeText = String(activeCount)
+    } else if (pendingCount > 0) {
+      badgeText = `+${pendingCount}`
+    }
+
+    chrome.action.setBadgeText({ text: badgeText })
+    chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" })
   } catch {
-    browser.action.setBadgeText({ text: "" })
+    chrome.action.setBadgeText({ text: "" })
   }
 }
 
@@ -58,9 +76,9 @@ function notify(
   type: chrome.notifications.TemplateType = "basic"
 ): void {
   const id = `cv-pipeline-${Date.now()}`
-  browser.notifications.create(id, {
+  chrome.notifications.create(id, {
     type,
-    iconUrl: browser.runtime.getURL("icons/icon-48.png"),
+    iconUrl: chrome.runtime.getURL("icons/icon-48.png"),
     title,
     message,
   })
@@ -71,10 +89,10 @@ function notify(
 // ---------------------------------------------------------------------------
 
 async function sendProgressToTabs(payload: PipelineProgressPayload): Promise<void> {
-  const tabs = await browser.tabs.query({ active: true })
+  const tabs = await chrome.tabs.query({ active: true })
   for (const tab of tabs) {
     if (tab.id !== undefined) {
-      browser.tabs
+      chrome.tabs
         .sendMessage(tab.id, {
           type: "PIPELINE_PROGRESS",
           payload,
@@ -89,6 +107,16 @@ async function sendProgressToTabs(payload: PipelineProgressPayload): Promise<voi
 // ---------------------------------------------------------------------------
 // Pipeline orchestration
 // ---------------------------------------------------------------------------
+
+function isNetworkError(err: unknown): boolean {
+  if (err instanceof TypeError) {
+    return true
+  }
+  if (err instanceof Error && err.message.includes("fetch")) {
+    return true
+  }
+  return false
+}
 
 async function runPipeline(
   payload: AddToPipelinePayload
@@ -105,52 +133,71 @@ async function runPipeline(
     url: job.url,
   })
 
-  try {
-    await sendProgressToTabs({
-      step: "uploading",
-      applicationName: application.name,
-      message: "Uploading job description...",
-    })
+  await sendProgressToTabs({
+    step: "uploading",
+    applicationName: application.name,
+    message: "Uploading job description...",
+  })
 
-    // Step 2: Upload job description as a file (job-description.txt)
-    if (job.description) {
-      await client.uploadFile(
-        application.name,
-        job.description,
-        "job-description.txt"
-      )
-    }
-
-    // Step 3: Trigger tailor action
-    await sendProgressToTabs({
-      step: "tailoring",
-      applicationName: application.name,
-      message: "Tailoring CV — this may take a moment...",
-    })
-
-    const actionResult = await client.executeAction(
-      "tailor",
-      application.name
+  // Step 2: Upload job description as a file (job-description.txt)
+  if (job.description) {
+    await client.uploadFile(
+      application.name,
+      job.description,
+      "job-description.txt"
     )
+  }
 
-    // Step 4: Done
-    await sendProgressToTabs({
-      step: "done",
-      applicationName: application.name,
-      jobId: actionResult.job_id,
-      message: `CV tailored for ${job.company}!`,
-    })
+  // Step 3: Trigger tailor action
+  await sendProgressToTabs({
+    step: "tailoring",
+    applicationName: application.name,
+    message: "Tailoring CV — this may take a moment...",
+  })
 
-    // Cache locally
-    await prependApplication(application)
+  const actionResult = await client.executeAction(
+    "tailor",
+    application.name
+  )
 
-    return { application, jobId: actionResult.job_id }
-  } catch (err) {
-    // Error recovery: clean up orphaned application
-    try {
-      await client.updateApplication(application.name, { status: "rejected" })
-    } catch {
-      // If update fails, the app remains in "applied" — user can clean up manually
+  // Step 4: Done
+  await sendProgressToTabs({
+    step: "done",
+    applicationName: application.name,
+    jobId: actionResult.job_id,
+    message: `CV tailored for ${job.company}!`,
+  })
+
+  // Cache locally
+  await prependApplication(application)
+
+  return { application, jobId: actionResult.job_id }
+}
+
+async function runPipelineWithOfflineFallback(
+  payload: AddToPipelinePayload
+): Promise<{ success: boolean; result?: PipelineResult; savedOffline?: boolean }> {
+  try {
+    const result = await runPipeline(payload)
+    return { success: true, result }
+  } catch (err: unknown) {
+    if (isNetworkError(err)) {
+      const pendingJob: PendingJob = {
+        id: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        job: payload.job,
+        createdAt: Date.now(),
+        retryCount: 0,
+        lastError: err instanceof Error ? err.message : "Network error",
+      }
+      await addPendingJob(pendingJob)
+      void updateBadge()
+
+      notify(
+        "API unreachable",
+        `Job for ${payload.job.company} saved for retry`
+      )
+
+      return { success: false, savedOffline: true }
     }
     throw err
   }
@@ -159,8 +206,6 @@ async function runPipeline(
 // ---------------------------------------------------------------------------
 // Follow-up reminder check
 // ---------------------------------------------------------------------------
-
-const NOTIFIED_STALE_APPS = new Set<string>()
 
 async function checkFollowups(): Promise<void> {
   const settings = await getSettings()
@@ -172,20 +217,16 @@ async function checkFollowups(): Promise<void> {
 
     const now = Date.now()
     const sevenDaysMs = 7 * 24 * 60 * 60 * 1000
-    let notifiedCount = 0
-    const MAX_NOTIFICATIONS_PER_CYCLE = 3
 
     for (const app of apps) {
-      if (notifiedCount >= MAX_NOTIFICATIONS_PER_CYCLE) break
-
       const createdAt = new Date(app.created_at).getTime()
-      if (now - createdAt > sevenDaysMs && !NOTIFIED_STALE_APPS.has(app.name)) {
+      if (now - createdAt > sevenDaysMs) {
         notify(
           "Follow-up reminder",
           `No update for "${app.position}" at ${app.company}. Consider following up.`
         )
-        NOTIFIED_STALE_APPS.add(app.name)
-        notifiedCount++
+        // Only notify the first stale application per check cycle
+        break
       }
     }
   } catch {
@@ -194,10 +235,65 @@ async function checkFollowups(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Pending jobs retry
+// ---------------------------------------------------------------------------
+
+async function retryPendingJobs(): Promise<void> {
+  const pending = await getPendingJobs()
+  if (pending.length === 0) return
+
+  try {
+    const client = await createClientFromStorage()
+    const healthy = await client.isHealthy()
+    if (!healthy) return
+  } catch {
+    return
+  }
+
+  let successCount = 0
+  const toKeep: PendingJob[] = []
+
+  for (const job of pending) {
+    if (job.retryCount >= MAX_RETRIES) {
+      continue
+    }
+
+    const backoffIdx = Math.min(job.retryCount, BACKOFF_INTERVALS_MS.length - 1)
+    const backoffMs = BACKOFF_INTERVALS_MS[backoffIdx]!
+    const timeSinceCreated = Date.now() - job.createdAt
+    if (timeSinceCreated < backoffMs) {
+      toKeep.push(job)
+      continue
+    }
+
+    try {
+      await runPipeline({ job: job.job })
+      await removePendingJob(job.id)
+      successCount++
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : "Retry failed"
+      await updatePendingJob(job.id, {
+        retryCount: job.retryCount + 1,
+        lastError: errMsg,
+      })
+      toKeep.push({ ...job, retryCount: job.retryCount + 1, lastError: errMsg })
+    }
+  }
+
+  if (successCount > 0) {
+    notify(
+      "Offline jobs retried",
+      `${successCount} job${successCount > 1 ? "s" : ""} processed successfully`
+    )
+    void updateBadge()
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Message handler
 // ---------------------------------------------------------------------------
 
-browser.runtime.onMessage.addListener(
+chrome.runtime.onMessage.addListener(
   (
     message: ExtensionMessage<unknown>,
     _sender,
@@ -206,14 +302,20 @@ browser.runtime.onMessage.addListener(
     switch (message.type) {
       case "ADD_TO_PIPELINE": {
         const payload = message.payload as AddToPipelinePayload
-        runPipeline(payload)
+        runPipelineWithOfflineFallback(payload)
           .then((result) => {
-            sendResponse({ success: true, result })
-            void updateBadge()
-            notify(
-              "Pipeline started",
-              `Application created for ${payload.job.position} at ${payload.job.company}`
-            )
+            if (result.success && result.result) {
+              sendResponse({ success: true, result: result.result })
+              void updateBadge()
+              notify(
+                "Pipeline started",
+                `Application created for ${payload.job.position} at ${payload.job.company}`
+              )
+            } else if (result.savedOffline) {
+              sendResponse({ success: false, savedOffline: true })
+            } else {
+              sendResponse({ success: false, error: "Pipeline failed" })
+            }
           })
           .catch((err: unknown) => {
             const errMessage =
@@ -221,7 +323,6 @@ browser.runtime.onMessage.addListener(
             sendResponse({ success: false, error: errMessage })
             notify("Pipeline failed", errMessage)
           })
-        // Return true to keep the message channel open for async sendResponse
         return true
       }
 
@@ -251,6 +352,25 @@ browser.runtime.onMessage.addListener(
         return true
       }
 
+      case "RETRY_PENDING_JOBS": {
+        retryPendingJobs()
+          .then(() => getPendingJobs())
+          .then((jobs) => sendResponse({ success: true, jobs }))
+          .catch((err: unknown) => {
+            sendResponse({ success: false, error: String(err) })
+          })
+        return true
+      }
+
+      case "GET_PENDING_JOBS": {
+        getPendingJobs()
+          .then((jobs) => sendResponse({ success: true, jobs }))
+          .catch((err: unknown) => {
+            sendResponse({ success: false, error: String(err) })
+          })
+        return true
+      }
+
       default:
         return false
     }
@@ -261,12 +381,15 @@ browser.runtime.onMessage.addListener(
 // Alarms
 // ---------------------------------------------------------------------------
 
-browser.alarms.onAlarm.addListener((alarm) => {
+chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAMES.BADGE_REFRESH) {
     void updateBadge()
   }
   if (alarm.name === ALARM_NAMES.FOLLOWUP_CHECK) {
     void checkFollowups()
+  }
+  if (alarm.name === ALARM_NAMES.RETRY_CHECK) {
+    void retryPendingJobs()
   }
 })
 
@@ -274,17 +397,20 @@ browser.alarms.onAlarm.addListener((alarm) => {
 // Install / startup lifecycle
 // ---------------------------------------------------------------------------
 
-browser.runtime.onInstalled.addListener(() => {
-  browser.alarms.create(ALARM_NAMES.BADGE_REFRESH, {
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create(ALARM_NAMES.BADGE_REFRESH, {
     periodInMinutes: ALARM_INTERVALS.BADGE_REFRESH_MINUTES,
   })
-  browser.alarms.create(ALARM_NAMES.FOLLOWUP_CHECK, {
+  chrome.alarms.create(ALARM_NAMES.FOLLOWUP_CHECK, {
     periodInMinutes: ALARM_INTERVALS.FOLLOWUP_CHECK_MINUTES,
+  })
+  chrome.alarms.create(ALARM_NAMES.RETRY_CHECK, {
+    periodInMinutes: ALARM_INTERVALS.RETRY_CHECK_MINUTES,
   })
 
   void updateBadge()
 })
 
-browser.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(() => {
   void updateBadge()
 })

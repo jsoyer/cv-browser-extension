@@ -151,11 +151,13 @@ export const DEFAULT_API_URL = "http://localhost:8080"
 export const ALARM_NAMES = {
   BADGE_REFRESH: "badge-refresh",
   FOLLOWUP_CHECK: "followup-check",
+  RETRY_CHECK: "retry-check",
 } as const
 
 export const ALARM_INTERVALS = {
   BADGE_REFRESH_MINUTES: 5,
   FOLLOWUP_CHECK_MINUTES: 60,
+  RETRY_CHECK_MINUTES: 5,
 } as const
 
 export const STORAGE_KEYS = {

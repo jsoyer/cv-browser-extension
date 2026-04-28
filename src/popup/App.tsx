@@ -3,7 +3,7 @@ import { browser } from "../lib/browser"
 import { ApplicationList } from "./components/ApplicationList"
 import { QuickActions } from "./components/QuickActions"
 import { getRecentApplications, getSettings } from "../lib/storage"
-import type { Application, ExtensionMessage, ExtensionSettings } from "../lib/types"
+import type { Application, ExtensionMessage, ExtensionSettings, PendingJob } from "../lib/types"
 
 // ---------------------------------------------------------------------------
 // Connection status indicator
@@ -26,6 +26,57 @@ function ConnectionDot({ healthy }: { healthy: boolean | null }) {
 }
 
 // ---------------------------------------------------------------------------
+// Pending jobs section
+// ---------------------------------------------------------------------------
+
+function PendingJobsSection({
+  jobs,
+  onRetry,
+  isRetrying,
+}: {
+  jobs: PendingJob[]
+  onRetry: () => void
+  isRetrying: boolean
+}) {
+  if (jobs.length === 0) return null
+
+  return (
+    <div className="border-t border-white/10 px-4 py-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+          Pending Jobs ({jobs.length})
+        </h2>
+        <button
+          onClick={onRetry}
+          disabled={isRetrying}
+          className="rounded bg-violet-600 px-2 py-1 text-xs font-medium text-white hover:bg-violet-500 disabled:opacity-50"
+        >
+          {isRetrying ? "Retrying..." : "Retry Now"}
+        </button>
+      </div>
+      <ul className="space-y-1.5">
+        {jobs.map((job) => (
+          <li
+            key={job.id}
+            className="rounded-lg bg-gray-800 px-3 py-2 text-xs"
+          >
+            <div className="font-medium text-gray-200">
+              {job.job.position}
+            </div>
+            <div className="text-gray-400">{job.job.company}</div>
+            {job.lastError && (
+              <div className="mt-1 text-[10px] text-red-400">
+                {job.lastError}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -34,6 +85,22 @@ export function App() {
   const [applications, setApplications] = useState<Application[]>([])
   const [healthy, setHealthy] = useState<boolean | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [pendingJobs, setPendingJobs] = useState<PendingJob[]>([])
+  const [isRetrying, setIsRetrying] = useState(false)
+
+  function loadPendingJobs() {
+    const msg: ExtensionMessage = { type: "GET_PENDING_JOBS" }
+    chrome.runtime
+      .sendMessage(msg)
+      .then((res: { success: boolean; jobs?: PendingJob[] }) => {
+        if (res.success && res.jobs) {
+          setPendingJobs(res.jobs)
+        }
+      })
+      .catch(() => {
+        // Ignore
+      })
+  }
 
   useEffect(() => {
     // Load settings
@@ -64,7 +131,28 @@ export function App() {
       .catch(() => {
         // Use cached data — already set above
       })
+
+    // Load pending jobs
+    loadPendingJobs()
   }, [])
+
+  function handleRetry() {
+    setIsRetrying(true)
+    const msg: ExtensionMessage = { type: "RETRY_PENDING_JOBS" }
+    chrome.runtime
+      .sendMessage(msg)
+      .then((res: { success: boolean; jobs?: PendingJob[] }) => {
+        if (res.success && res.jobs) {
+          setPendingJobs(res.jobs)
+        }
+      })
+      .catch(() => {
+        // Ignore
+      })
+      .finally(() => {
+        setTimeout(() => setIsRetrying(false), 1000)
+      })
+  }
 
   const apiUrl = settings?.apiUrl ?? ""
 
@@ -127,6 +215,13 @@ export function App() {
           isLoading={isLoading}
         />
       </div>
+
+      {/* Pending jobs */}
+      <PendingJobsSection
+        jobs={pendingJobs}
+        onRetry={handleRetry}
+        isRetrying={isRetrying}
+      />
 
       {/* Quick actions */}
       <div className="border-t border-white/10 px-4 py-3">
