@@ -1,14 +1,20 @@
-name: Release
+name: Release Extension
+
 on:
   push:
     tags: ['v*']
+
 permissions:
   contents: write
+
 jobs:
   release:
+    name: Build, package, and release
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -18,27 +24,26 @@ jobs:
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "pnpm"
+          node-version: '20'
+          cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build extension
-        run: pnpm build:only
+      - name: Build and package (Chrome + Firefox)
+        run: pnpm package
 
-      - name: Package extension
+      - name: Create source archive (required by Firefox AMO for minified bundles)
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          ZIPFILE="cv-pipeline-extension-${VERSION}.zip"
-          cd dist
-          zip -r "../${ZIPFILE}" .
-          cd ..
-          echo "ZIPFILE=${ZIPFILE}" >> $GITHUB_ENV
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          VERSION="${GITHUB_REF_NAME#v}"
+          git archive --format=zip HEAD -o "dist/packages/cv-extension-source-v${VERSION}.zip"
+
+      - name: List packages
+        run: ls -lh dist/packages/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ZIPFILE }}
+          files: dist/packages/*.zip
           generate_release_notes: true
+          fail_on_unmatched_files: true

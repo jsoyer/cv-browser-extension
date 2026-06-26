@@ -2,16 +2,17 @@ import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import { resolve } from "path"
-import { copyFileSync, mkdirSync, existsSync } from "fs"
+import { copyFileSync, mkdirSync, existsSync, rmSync } from "fs"
 
 // ---------------------------------------------------------------------------
-// Custom plugin: copy manifest.json and icons to dist root
+// Custom plugin: copy manifest.json, icons, and HTML pages to dist root
 // ---------------------------------------------------------------------------
 function copyExtensionAssets() {
   return {
     name: "copy-extension-assets",
     writeBundle() {
       const root = resolve(__dirname)
+
       // Manifest
       const manifestSrc = resolve(root, "src/manifest.json")
       const manifestDest = resolve(root, "dist/manifest.json")
@@ -32,6 +33,35 @@ function copyExtensionAssets() {
         if (existsSync(src)) {
           copyFileSync(src, dest)
         }
+      }
+
+      // HTML pages: Vite outputs them under dist/src/* (relative to project root).
+      // The manifest references popup/index.html and options/index.html, so we
+      // copy them to the expected locations and remove the stale dist/src/ subtree.
+      const htmlPages = [
+        { from: "dist/src/popup/index.html", to: "dist/popup/index.html", dir: "dist/popup" },
+        {
+          from: "dist/src/options/index.html",
+          to: "dist/options/index.html",
+          dir: "dist/options",
+        },
+      ]
+      for (const page of htmlPages) {
+        const src = resolve(root, page.from)
+        const dest = resolve(root, page.to)
+        const dir = resolve(root, page.dir)
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+        if (existsSync(src)) {
+          copyFileSync(src, dest)
+        } else {
+          console.warn(`[copy-extension-assets] HTML not found at ${src}`)
+        }
+      }
+
+      // Remove the stale dist/src/ directory produced by Vite's HTML transform
+      const distSrc = resolve(root, "dist/src")
+      if (existsSync(distSrc)) {
+        rmSync(distSrc, { recursive: true, force: true })
       }
     },
   }
